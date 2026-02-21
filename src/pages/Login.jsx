@@ -2,39 +2,35 @@ import { useState } from 'react'
 import { supabase } from '../lib/supabaseClient'
 import { Link, useNavigate } from 'react-router-dom'
 
+//risk_score logic integration
+function getDeviceInfo() {  //Device Fingerprint Helper
+  const { userAgent, language } = navigator;
+  const { width, height, colorDepth } = screen;
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return btoa(`${userAgent}-${language}-${width}x${height}-${colorDepth}-${timezone}`);
+}
+
 function Login() {
   // State to store form inputs
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  
-  // State to show loading spinner during login
-  const [loading, setLoading] = useState(false)
-  
-  // State to show error messages
-  const [error, setError] = useState('')
-  
-  // Hook to navigate to different pages
-  const navigate = useNavigate()
+  const [loading, setLoading] = useState(false)  // State to show loading spinner during login
+  const [error, setError] = useState('')  // State to show error messages
+  const navigate = useNavigate()  // Hook to navigate to different pages
 
   // Function to handle login form submission
   const handleLogin = async (e) => {
     e.preventDefault() // Prevent page reload
-    
-    // Clear previous error
-    setError('')
-
-    // Start loading state
-    setLoading(true)
+    setError('') // Clear previous error
+    setLoading(true)  // Start loading state
 
     try {
-      // Call Supabase signInWithPassword function
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({  // Call Supabase signInWithPassword function
         email: email,
         password: password,
       })
-
-      // Check if there was an error
-      if (error) {
+// Check if there was an error
+    /*  if (error) { 
         setError(error.message)
       } else {
         // Success! The session is automatically stored by Supabase
@@ -47,6 +43,54 @@ function Login() {
     } finally {
       // Stop loading state
       setLoading(false)
+    } */ //commented by Jill to add risk engine logic
+  if (error) {
+        setError(error.message)
+        setLoading(false)
+        return // Stop execution here
+      }
+
+ // Step 2: Credentials are correct. Run the IntelliID Risk Engine!
+      const userId = data.user.id
+      const deviceInfo = getDeviceInfo()
+
+      const { data: riskData, error: fnError } = await supabase.functions.invoke('risk_score', {
+        body: {
+          user_id: userId,
+          user_name: email, //Email  as username.
+          device_info: deviceInfo,
+          login_success: true 
+        }
+      })
+
+      if (fnError) {
+        console.error("Risk Engine Error:", fnError)
+        setError("Security check failed. Please try again.")
+        await supabase.auth.signOut() // Sign out if the security check crashes
+        setLoading(false)
+        return
+      }
+
+      // Step 3: Handle Risk Engine Output
+      if (riskData.status === "FRAUD") {
+        await supabase.auth.signOut() // Immediately revoke access
+        setError(`Access Denied: High risk detected (Score: ${riskData.score})`)
+        
+      } else if (riskData.status === "SUSPICIOUS") {
+        // UI shows error message for now. Once your friends build an MFA page, 
+        // you can change this to: navigate('/mfa-verification')
+        setError(`Suspicious Login Detected (Score: ${riskData.score}). Additional verification required.`)
+        
+      } else {
+        // SAFE! Navigate to dashboard
+        navigate('/dashboard')
+      }
+
+    // eslint-disable-next-line no-unused-vars
+    } catch (err) {
+      setError('An unexpected error occurred. Please try again.')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -56,7 +100,7 @@ function Login() {
         {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-800">IntelliID</h1>
-          <p className="text-gray-600 mt-2">Welcome back! Please login</p>
+          <p className="text-gray-600 mt-2">Welcome to IntelliD Login screen</p>
         </div>
 
         {/* Login Form */}
